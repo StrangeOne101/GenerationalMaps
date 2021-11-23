@@ -105,6 +105,10 @@ public class MapListener implements Listener {
         }
     }
 
+    //TODO Change CraftingInventory to Inventory. That way, the CartographyInventory can be put in too
+    //TODO Change the slot offset to only be offset for CraftingInventory and not CartographyInventory
+    //TODO CraftingInventory Slots 0-8 are crafting, 9 is output
+    //TODO CartographyInventory Slot 0 is map, 1, is extra, 2 is output
     private boolean doCrafting(CraftingInventory inventory, boolean sneak, boolean prepare) {
         int filledMapSlot = -1;
         ItemStack stack = null;
@@ -151,7 +155,7 @@ public class MapListener implements Listener {
                 @Override
                 public void run() {
                     finalStack.setAmount(currentAmount); //Restore the input filled map to what it was. This effectively makes it not be consumed
-                    inventory.setItem(finalFilledMapSlot + (cartography ? 0 : 1), finalStack); //Offset by 1 as slot 0 is the output
+                    inventory.setItem(finalFilledMapSlot + 1, finalStack); //Offset by 1 as slot 0 is the output
                 }
             }.runTaskLater(GenerationalMaps.INSTANCE, 1); //We do this a tick later so it happens AFTER the craft
 
