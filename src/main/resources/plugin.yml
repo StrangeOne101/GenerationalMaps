@@ -1,0 +1,6 @@
+name: GenerationalMaps
+version: '${project.version}'
+main: com.strangeone101.generationalmaps.Generationalmaps
+api-version: 1.17
+authors: [ StrangeOne101 ]
+description: Gives maps an "Original", "Copy of Original" and "Copy of a Copy" like books have
