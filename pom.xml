@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.strangeone101</groupId>
-    <artifactId>generationalmaps</artifactId>
+    <artifactId>GenerationalMaps</artifactId>
     <version>1.0</version>
     <packaging>jar</packaging>
 
