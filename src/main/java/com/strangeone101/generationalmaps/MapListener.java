@@ -4,20 +4,24 @@ import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.chat.TranslatableComponent;
 import net.md_5.bungee.chat.ComponentSerializer;
+import org.bukkit.Bukkit;
 import org.bukkit.Keyed;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
 import org.bukkit.event.server.MapInitializeEvent;
 import org.bukkit.inventory.CartographyInventory;
 import org.bukkit.inventory.CraftingInventory;
 import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -43,9 +47,28 @@ public class MapListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOW)
     public void onPreCraft(PrepareItemCraftEvent event) {
-        if ((event.getRecipe() == null && ((Keyed)event.getRecipe()).getKey().toString().equals("minecraft:map_cloning"))) {
+        if ((event.getRecipe() != null && ((Keyed)event.getRecipe()).getKey().toString().equals("minecraft:map_cloning"))) {
             if (!doCrafting(event.getInventory(), false, true)) { //Do the crafting thing! Returns false when we should not craft anything
                 event.getInventory().setResult(null);
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOW)
+    public void onSlotClick(InventoryClickEvent event) {
+        if (event.getInventory() instanceof CartographyInventory) {
+            if (event.getSlot() < 2 || (event.isShiftClick() && event.getInventory().firstEmpty() < 2)) {
+                Bukkit.getScheduler().runTaskLater(GenerationalMaps.INSTANCE, () -> {
+                    if (!doCrafting(event.getInventory(), false, true)) {
+                        event.getInventory().setItem(2, null);
+                    }
+                }, 1); //Run 1 tick later so we modify stuff once its already placed
+            } else if (event.getSlot() == 2) {
+                if (!doCrafting(event.getInventory(), event.isShiftClick(), false)) {
+                    event.getInventory().setItem(2, null);
+                    event.setCancelled(true);
+                    event.setResult(Event.Result.DENY);
+                }
             }
         }
     }
@@ -64,17 +87,13 @@ public class MapListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onMapFilled(MapInitializeEvent event) {
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                //Loop through all players in the same world when a new map is made
-                for (Player player : event.getMap().getWorld().getPlayers()) {
-                    updatePlayerSlot(player, EquipmentSlot.HAND, event.getMap().getId());
-                    updatePlayerSlot(player, EquipmentSlot.OFF_HAND, event.getMap().getId());
-                }
+        Bukkit.getScheduler().runTaskLater(GenerationalMaps.INSTANCE, () -> {
+            //Loop through all players in the same world when a new map is made
+            for (Player player : event.getMap().getWorld().getPlayers()) {
+                updatePlayerSlot(player, EquipmentSlot.HAND, event.getMap().getId());
+                updatePlayerSlot(player, EquipmentSlot.OFF_HAND, event.getMap().getId());
             }
-        }.runTaskLater(GenerationalMaps.INSTANCE, 1); //Do it all 1 tick later so the item will have changed from map to filled map
-
+        }, 1); //Do it all 1 tick later so the item will have changed from map to filled map
     }
 
     private void updatePlayerSlot(Player player, EquipmentSlot slot, int mapId) {
@@ -109,55 +128,116 @@ public class MapListener implements Listener {
     //TODO Change the slot offset to only be offset for CraftingInventory and not CartographyInventory
     //TODO CraftingInventory Slots 0-8 are crafting, 9 is output
     //TODO CartographyInventory Slot 0 is map, 1, is extra, 2 is output
-    private boolean doCrafting(CraftingInventory inventory, boolean sneak, boolean prepare) {
-        int filledMapSlot = -1;
-        ItemStack stack = null;
-        for (int i = 0; i < inventory.getMatrix().length; i++) {
-            ItemStack is = inventory.getMatrix()[i];
-            if (is != null && is.getType() == Material.FILLED_MAP) {
-                stack = is;
-                filledMapSlot = i;
-                break;
+    private boolean doCrafting(Inventory inventory, boolean sneak, boolean prepare) {
+        int blankMapAmount = 0;
+        int inputMapSlot = -1;
+        int resultMapSlot = -1;
+        ItemStack inputStack = null;
+
+        if (inventory instanceof CraftingInventory) {
+
+            for (int i = 0; i < ((CraftingInventory) inventory).getMatrix().length; i++) {
+                ItemStack is = ((CraftingInventory) inventory).getMatrix()[i];
+                if (is != null && is.getType() == Material.FILLED_MAP) {
+                    inputStack = is;
+                    inputMapSlot = i + 1; //Inputs are 1 slot after the output slot
+
+                } else if (is != null && is.getType() == Material.MAP) {
+                    blankMapAmount++;
+                }
+                resultMapSlot = 0; //Its 1 slot before the inputs
+            }
+        } else if (inventory instanceof CartographyInventory) {
+            ItemStack temp = inventory.getItem(0); //Map input
+            if (temp != null && temp.getType() == Material.FILLED_MAP) {
+                inputStack = temp;
+                inputMapSlot = 0;
+            }
+
+            temp = inventory.getItem(1);
+            if (temp != null && temp.getType() == Material.MAP) {
+                blankMapAmount = temp.getAmount();
+            }
+
+            if (inputMapSlot != -1 && blankMapAmount > 0) {
+                resultMapSlot = 2;
+            } else {
+                return true; //Only return true to cancel modifying anything but cloning maps
             }
         }
 
+
         //If there is no filled map, something went very wrong
-        if (stack == null) return false;
+        if (inputStack == null) return false;
+
+        //If there is no maps used. Which idk how that could happen but
+        if (blankMapAmount < 1) return false;
 
         //Check that we can clone the map
-        if (getGeneration(stack) >= 2) {
+        if (getGeneration(inputStack) >= 2) {
+
             return false;
         }
 
-        int currentAmount = stack.getAmount();
+        int inputStackAmount = inputStack.getAmount();
         if (sneak) {
-            stack.setAmount(64); //We set it to 64 so if they shift click, it won't only craft 1 set at a time
-            inventory.setItem(filledMapSlot, stack); //Update the inventory
+            inputStack.setAmount(64); //We set it to 64 so if they shift click, it won't only craft 1 set at a time
+            inventory.setItem(inputMapSlot, inputStack); //Update the inventory
         }
 
-        int howMany = 0;
-        for (ItemStack item : inventory.getMatrix()) {
-            if (item != null && item.getType() == Material.MAP) howMany++; //Count how many maps we are crafting with to clone
-        }
+        ItemStack result = inputStack.clone();
 
-        ItemStack result = stack.clone();
-        result.setAmount(howMany); //Set x amount in the output depending on the number if unfilled input maps
+        if (inventory instanceof CartographyInventory) {
+            result.setAmount(1);
+
+            if (sneak) result.setAmount(blankMapAmount);
+        } else {
+            result.setAmount(blankMapAmount); //Set x amount in the output depending on the number if unfilled input maps
+        }
         setGeneration(result, getGeneration(result) + 1); //Update the generation NBT on the lore of the output
         updateGenerationLore(result); //Update the lore to show the generation
-        inventory.setResult(result); //Update the inventory
 
 
-        ItemStack finalStack = stack;
-        int finalFilledMapSlot = filledMapSlot;
+        /*if (inventory instanceof CartographyInventory) {
+            if (prepare) {
+                Bukkit.getScheduler().runTaskLater(GenerationalMaps.INSTANCE, () ->
+                        ReflectionUtils.sendSlotUpdate((Player)inventory.getViewers().get(0), 22, 2, result), 1);
+            }
+            else inventory.setItem(resultMapSlot, result); */ //Update the inventory
+        /*} else {*/
+            inventory.setItem(resultMapSlot, result); //Update the inventory
+        /*}*/
+
+
+        ItemStack finalStack = inputStack.clone();
+        int finalFilledMapSlot = inputMapSlot;
+        int finalBlankMapAmount = blankMapAmount;
 
         if (!prepare) {
-            new BukkitRunnable() {
-                @Override
-                public void run() {
-                    finalStack.setAmount(currentAmount); //Restore the input filled map to what it was. This effectively makes it not be consumed
-                    inventory.setItem(finalFilledMapSlot + 1, finalStack); //Offset by 1 as slot 0 is the output
+            Bukkit.getScheduler().runTaskLater(GenerationalMaps.INSTANCE, () -> {
+                if (inventory instanceof CartographyInventory) {
+                    //This fixes a bug where the map is consumed only if you put 1 blank map in
+                    /*if (sneak && (finalBlankMapAmount - 1) == 0) {
+                        finalStack.setAmount(inputStackAmount); //Restore the input filled map to what it was. This effectively makes it not be consumed
+                        inventory.setItem(finalFilledMapSlot, finalStack);
+                    }*/
+
+                    //This has to be done in the next tick AGAIN because setting the map slot will set the output
+                    //in the current tick again
+                    Bukkit.getScheduler().runTaskLater(GenerationalMaps.INSTANCE, () -> {
+                        if ((finalBlankMapAmount - 1) > 0) {
+                            inventory.setItem(2, result);
+                        }
+                    }, 1);
+
+                    //Bukkit.getScheduler().runTaskLater(GenerationalMaps.INSTANCE, () ->
+                            //ReflectionUtils.sendSlotUpdate((Player)inventory.getViewers().get(0), 22, 2, result), 1);
                 }
-            }.runTaskLater(GenerationalMaps.INSTANCE, 1); //We do this a tick later so it happens AFTER the craft
+
+                finalStack.setAmount(inputStackAmount); //Restore the input filled map to what it was. This effectively makes it not be consumed
+                inventory.setItem(finalFilledMapSlot, finalStack);
+
+            }, 1);//We do this a tick later so it happens AFTER the craft
 
         }
 
@@ -189,11 +269,9 @@ public class MapListener implements Listener {
         if (meta.hasLore()) {
             //Pull the true lore from the item
             List<BaseComponent[]> lore = ReflectionUtils.convertList(ReflectionUtils.getTrueLore(stack));
-            System.out.println("Test0");
             out:
             for (int i = 0; i < maxLines; i++) {
                 BaseComponent[] line = lore.get(i);
-                System.out.println("Test1");
                 //If the components on this line contain the translated book generation line
                 for (BaseComponent inlineComponent : line) {
                     //Due to the fact that there is almost an infinite amount of components in the "extra" tag, we need recursion
@@ -215,7 +293,6 @@ public class MapListener implements Listener {
 
     private TranslatableComponent loreLoop(BaseComponent component) {
         if (component instanceof TranslatableComponent) {
-            System.out.println("Test3");
             //If this line is the one we are gonna update
             if (((TranslatableComponent) component).getTranslate().startsWith("book.generation.")) {
                 return (TranslatableComponent) component;
@@ -229,6 +306,5 @@ public class MapListener implements Listener {
         }
         return null;
     }
-
 
 }

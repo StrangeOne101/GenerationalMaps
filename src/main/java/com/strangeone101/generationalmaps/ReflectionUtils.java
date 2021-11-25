@@ -7,11 +7,14 @@ import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.chat.ComponentSerializer;
 
 import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,8 +29,13 @@ public class ReflectionUtils {
     static Field loreField;
     static Field displayNameField;
 
+    static Field playerConnection;
+
     static Method asNMSCopy;
     static Method getHandle;
+    static Method sendPacket;
+    static Constructor setSlotPacket;
+
 
     static void setup() {
         if (setup) return;
@@ -44,6 +52,26 @@ public class ReflectionUtils {
 
             asNMSCopy = craftStackClass.getDeclaredMethod("asNMSCopy", ItemStack.class);
             getHandle = craftPlayerClass.getDeclaredMethod("getHandle");
+
+            // !!! The classes bellow use the current 1.17 spigot mapping names !!!
+            Class nmsItemStackClass = Class.forName("net.minecraft.world.item.ItemStack");
+            Class nmsSetSlotPacketClass = Class.forName("net.minecraft.network.protocol.game.PacketPlayOutSetSlot");
+            setSlotPacket = nmsSetSlotPacketClass.getDeclaredConstructor(Integer.TYPE, Integer.TYPE, Integer.TYPE, nmsItemStackClass);
+
+            Class nmsPlayerClass = Class.forName("net.minecraft.server.level.EntityPlayer");
+            Class playerConnectionClass = Class.forName("net.minecraft.server.network.PlayerConnection");
+
+            //The way to find playerConnection USED to be simpler since it used to always be named that.
+            //BUT THEN THE MAPPINGS CHANGED AAAAAAAAAAAAAAAAAAAAAAAHHHHH
+            for (Field field : nmsPlayerClass.getDeclaredFields()) {
+                if (field.getType().equals(playerConnectionClass)) {
+                    playerConnection = field;
+                    break;
+                }
+            }
+
+            sendPacket = playerConnectionClass.getDeclaredMethod("sendPacket", Class.forName("net.minecraft.network.protocol.Packet"));
+
 
             setup = true;
         } catch (ClassNotFoundException | NoSuchFieldException | NoSuchMethodException e) {
@@ -129,6 +157,28 @@ public class ReflectionUtils {
             stack.setItemMeta(meta);
         } catch (IllegalAccessException e) {
             e.printStackTrace();
+        }
+    }
+
+    public static void sendSlotUpdate(Player player, int windowId, int slot, ItemStack stack) {
+        if (!setup) setup();
+
+        try {
+            //Create a NMS version of the itemstack
+            Object nmsStack = asNMSCopy.invoke(null, stack);
+            //Create the packet with the constructor
+            Object packet = setSlotPacket.newInstance(windowId, 0, slot, nmsStack);
+            //Get the NMS player object from the bukkit player
+            Object handlePlayer = getHandle.invoke(player);
+            //Get the connection from the NMS player
+            Object connection = playerConnection.get(handlePlayer);
+            //Let the packet fly!
+            sendPacket.invoke(connection, packet);
+            player.sendMessage("Sent you the packet");
+        } catch (IllegalAccessException | InstantiationException e) {
+            e.printStackTrace();
+        } catch (InvocationTargetException e) {
+            e.getTargetException().printStackTrace();
         }
     }
 }
