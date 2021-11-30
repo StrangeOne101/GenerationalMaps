@@ -64,7 +64,8 @@ public class MapListener implements Listener {
                     }
                 }, 1); //Run 1 tick later so we modify stuff once its already placed
             } else if (event.getSlot() == 2) {
-                if (!doCrafting(event.getInventory(), event.isShiftClick(), false)) {
+                //The shift click check is because for some reason, shift clicking gets around this code somehow sometimes???
+                if (event.isShiftClick() || !doCrafting(event.getInventory(), event.isShiftClick(), false)) {
                     event.getInventory().setItem(2, null);
                     event.setCancelled(true);
                     event.setResult(Event.Result.DENY);
